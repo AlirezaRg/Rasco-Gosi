@@ -1,6 +1,6 @@
 """
-🤖 RASCO - AI Desktop Assistant
-JARVIS-style UI | Black & Gold | Powered by AlirezaRg (Pro/Max subscription)
+RASCO - AI Desktop Assistant
+JARVIS-style UI | Black & Gold | Powered by Claude Code
 """
 
 import os, json, time, subprocess, webbrowser, threading, math, random, shutil, tempfile, wave
@@ -10,8 +10,6 @@ import urllib.request, urllib.error
 import pyttsx3, pyautogui, psutil
 from datetime import datetime
 
-# میکروفون اختیاریه - اگه sounddevice/numpy نصب نباشن یا میکروفونی وصل نباشه،
-# برنامه بدون قابلیت صوتی کار می‌کنه و فقط دکمه 🎤 غیرفعال می‌مونه.
 try:
     import sounddevice as sd
     import numpy as np
@@ -25,25 +23,148 @@ try:
 except ImportError:
     SR_AVAILABLE = False
 
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
+
 # ============================================================
-CLAUDE_MODEL = "sonnet"  # alias: 'sonnet', 'opus', or full model name
+CLAUDE_MODEL   = "sonnet"
 ASSISTANT_NAME = "RASCO"
-CITY = "Tehran"
-CITY_FA = "تهران"
+CITY           = "Tehran"
+CITY_FA        = "تهران"
 # ============================================================
 
-BG     = "#050505"
+BG     = "#030303"
 GOLD   = "#C9A84C"
 GOLD_L = "#F0C040"
 GOLD_D = "#5a4820"
-CYAN   = "#C9A84C"   # kept as alias so existing code paths still render gold accents
+GOLD_G = "#8a6e2a"
+CYAN   = "#C9A84C"
 CYAN_D = "#7a6020"
-GREEN  = "#39ff88"
-RED    = "#ff3860"
+GREEN  = "#00ff88"
+RED    = "#ff2255"
 ORANGE = "#F0C040"
 WHITE  = "#f0ece0"
 GRAY   = "#3a3a3a"
-PANEL  = "#0d0d0d"
+PANEL  = "#080808"
+DARK   = "#0a0a0a"
+
+# ============================================================
+# BROWSER ENGINE
+# ============================================================
+_browser = None
+_browser_lock = threading.Lock()
+
+def get_browser():
+    global _browser
+    with _browser_lock:
+        if _browser is not None:
+            try:
+                _ = _browser.title
+                return _browser
+            except Exception:
+                _browser = None
+        if not SELENIUM_AVAILABLE:
+            raise Exception("Selenium نصب نیست.")
+        opts = Options()
+        opts.add_argument("--start-maximized")
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option("useAutomationExtension", False)
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        try:
+            service = Service(ChromeDriverManager().install())
+            _browser = webdriver.Chrome(service=service, options=opts)
+        except Exception as e:
+            raise Exception(f"Chrome باز نشد: {e}")
+        return _browser
+
+def browser_navigate(url):
+    b = get_browser()
+    b.get(url)
+    return b
+
+def browser_click_text(text, timeout=8):
+    b = get_browser()
+    try:
+        el = WebDriverWait(b, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, f"//*[contains(text(),'{text}')]"))
+        )
+        el.click()
+        return True
+    except Exception:
+        return False
+
+def browser_click_selector(selector, timeout=8):
+    b = get_browser()
+    try:
+        el = WebDriverWait(b, timeout).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+        )
+        el.click()
+        return True
+    except Exception:
+        return False
+
+def browser_type(selector, text, timeout=8):
+    b = get_browser()
+    try:
+        el = WebDriverWait(b, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+        )
+        el.clear()
+        el.send_keys(text)
+        return True
+    except Exception:
+        return False
+
+def browser_js(script):
+    b = get_browser()
+    return b.execute_script(script)
+
+def youtube_play(query):
+    """یوتیوب رو باز می‌کنه، سرچ می‌کنه و اولین ویدیو رو پلی می‌کنه."""
+    b = browser_navigate(f"https://www.youtube.com/results?search_query={query.replace(' ', '+')}")
+    time.sleep(2)
+    try:
+        first = WebDriverWait(b, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "ytd-video-renderer a#video-title"))
+        )
+        first.click()
+        return "پلی شد."
+    except Exception:
+        return "ویدیو پیدا نشد، ولی یوتیوب باز شد."
+
+def spotify_play(query):
+    b = browser_navigate("https://open.spotify.com")
+    time.sleep(3)
+    try:
+        search_btn = WebDriverWait(b, 8).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "a[href='/search']"))
+        )
+        search_btn.click()
+        time.sleep(1)
+        inp = WebDriverWait(b, 8).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[data-testid='search-input']"))
+        )
+        inp.send_keys(query)
+        time.sleep(2)
+        first_song = WebDriverWait(b, 8).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "div[data-testid='tracklist-row']"))
+        )
+        play_btn = first_song.find_element(By.CSS_SELECTOR, "button[data-testid='play-button']")
+        play_btn.click()
+        return f"آهنگ {query} در Spotify پلی شد."
+    except Exception:
+        return f"Spotify باز شد، آهنگ رو خودت انتخاب کن."
 
 # ============================================================
 # TTS
@@ -52,7 +173,7 @@ def speak(text):
     def _s():
         try:
             e = pyttsx3.init()
-            e.setProperty('rate', 160)
+            e.setProperty('rate', 165)
             e.say(text)
             e.runAndWait()
             e.stop()
@@ -60,80 +181,53 @@ def speak(text):
     threading.Thread(target=_s, daemon=True).start()
 
 # ============================================================
-# MICROPHONE (اختیاری - فقط اگه میکروفون وصل و کتابخونه‌ها نصب باشن)
+# MICROPHONE
 # ============================================================
 def find_input_device():
-    """
-    اول سعی می‌کنه میکروفون پیش‌فرض ویندوز رو پیدا کنه (همونی که توی
-    Sound Settings ست شده) - چون وقتی هدفون جدید وصل می‌کنی، معمولاً
-    ویندوز خودش پیش‌فرض رو عوض می‌کنه. اگه نشد، اولین میکروفون موجود رو برمی‌گردونه.
-    """
-    if not MIC_LIBS_AVAILABLE:
-        return None
+    if not MIC_LIBS_AVAILABLE: return None
     try:
-        default_idx = sd.default.device[0]  # (input, output)
+        default_idx = sd.default.device[0]
         if default_idx is not None and default_idx >= 0:
             devices = sd.query_devices()
             if devices[default_idx].get("max_input_channels", 0) > 0:
                 return default_idx
-    except Exception:
-        pass
+    except Exception: pass
     try:
-        devices = sd.query_devices()
-        for i, d in enumerate(devices):
+        for i, d in enumerate(sd.query_devices()):
             if d.get("max_input_channels", 0) > 0:
                 return i
-    except Exception:
-        return None
+    except Exception: pass
     return None
-
-def list_input_devices():
-    """برای دیباگ: لیست همه میکروفون‌های موجود رو برمی‌گردونه."""
-    if not MIC_LIBS_AVAILABLE:
-        return []
-    try:
-        devices = sd.query_devices()
-        return [(i, d["name"]) for i, d in enumerate(devices) if d.get("max_input_channels", 0) > 0]
-    except Exception:
-        return []
 
 def mic_is_available():
     return MIC_LIBS_AVAILABLE and SR_AVAILABLE and find_input_device() is not None
 
 def record_and_transcribe(duration=6, sample_rate=16000):
-    """duration ثانیه ضبط می‌کنه و متن فارسی/انگلیسی رو برمی‌گردونه، یا None اگه نشد."""
     if not mic_is_available():
-        raise Exception("میکروفونی پیدا نشد یا کتابخونه‌های صوتی نصب نیستن.")
-
+        raise Exception("میکروفونی پیدا نشد.")
     device_idx = find_input_device()
     audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate,
-                         channels=1, dtype=np.int16, device=device_idx)
+                        channels=1, dtype=np.int16, device=device_idx)
     sd.wait()
-
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = tmp.name
         with wave.open(tmp_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(sample_rate)
-            wf.writeframes(audio_data.tobytes())
-
+            wf.setnchannels(1); wf.setsampwidth(2)
+            wf.setframerate(sample_rate); wf.writeframes(audio_data.tobytes())
         recognizer = sr.Recognizer()
         with sr.AudioFile(tmp_path) as source:
             audio = recognizer.record(source)
-
         try:
             return recognizer.recognize_google(audio, language="fa-IR")
         except Exception:
             return recognizer.recognize_google(audio, language="en-US")
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path and os.path.exists(tmp_path): os.unlink(tmp_path)
 
 # ============================================================
-# WEATHER - بدون API Key (از wttr.in رایگانه)
+# WEATHER
 # ============================================================
 def get_weather():
     try:
@@ -143,232 +237,735 @@ def get_weather():
             d = json.loads(r.read().decode())
         cur = d["current_condition"][0]
         desc = cur["lang_fa"][0]["value"] if cur.get("lang_fa") else cur["weatherDesc"][0]["value"]
-        return {
-            "temp": cur["temp_C"],
-            "feels": cur["FeelsLikeC"],
-            "humidity": cur["humidity"],
-            "desc": desc,
-            "wind": cur["windspeedKmph"],
-        }
-    except Exception as e:
+        return {"temp": cur["temp_C"], "feels": cur["FeelsLikeC"],
+                "humidity": cur["humidity"], "desc": desc, "wind": cur["windspeedKmph"]}
+    except Exception:
         return {"temp":"--","feels":"--","humidity":"--","desc":"نامشخص","wind":"--"}
 
 # ============================================================
-# CLAUDE CODE (uses your Pro/Max subscription via CLI)
+# CLAUDE
 # ============================================================
-SYSTEM_PROMPT = f"""You are {ASSISTANT_NAME}, an AI assistant controlling a Windows PC.
+SYSTEM_PROMPT = f"""You are {ASSISTANT_NAME}, an AI desktop assistant controlling a Windows PC and Chrome browser.
 User speaks Persian or English. Respond ONLY with JSON:
 {{"action":"ACTION","params":{{}},"response":"reply in user language"}}
 
 Actions:
-- open_website: {{"url":"https://..."}}
-- youtube_search: {{"query":"..."}}
-- open_app: {{"app":"chrome/firefox/notepad/calc/explorer/cmd/vlc/spotify/vscode/word/excel"}}
-- open_drive: {{"drive":"C"}} - opens a drive like C:\\ or D:\\ in File Explorer
-- open_folder: {{"path":"C:/Users/..."}} - opens a specific folder
-- copy_file: {{"source":"C:/path/file.txt","destination":"D:/path/"}}
-- move_file: {{"source":"C:/path/file.txt","destination":"D:/path/"}}
-- delete_file: {{"path":"C:/path/file.txt"}} - will ask user to confirm first
-- open_gmail: {{}} - opens Gmail in Chrome
-- type_text: {{"text":"..."}}
+- youtube_play: {{"query":"..."}} — opens YouTube and plays first result video
+- youtube_search: {{"query":"..."}} — opens YouTube search results
+- spotify_play: {{"query":"..."}} — opens Spotify and plays song
+- browser_open: {{"url":"https://..."}} — opens any URL in Chrome
+- browser_click: {{"selector":"css_selector OR text_to_click","type":"css|text"}}
+- browser_type: {{"selector":"css_selector","text":"..."}}
+- browser_scroll: {{"direction":"up|down","amount":3}}
+- browser_js: {{"script":"javascript code"}}
+- google_search: {{"query":"..."}} — Google search in browser
+- open_app: {{"app":"chrome/notepad/calc/explorer/cmd/vlc/spotify/vscode/word/excel/taskmgr"}}
+- open_drive: {{"drive":"C"}}
+- open_folder: {{"path":"C:/Users/..."}}
+- copy_file: {{"source":"...","destination":"..."}}
+- move_file: {{"source":"...","destination":"..."}}
+- delete_file: {{"path":"..."}}
+- type_text: {{"text":"..."}} — types text at current cursor position
 - press_key: {{"key":"enter/ctrl+c/alt+tab/win+d/etc"}}
 - take_screenshot
-- search_web: {{"query":"..."}}
 - volume_up
 - volume_down
 - minimize_window
 - close_window
-- speak_only
+- speak_only — just respond in conversation
 
-You will also receive recent CONVERSATION HISTORY before each new command. Use it to understand
-context, follow-up references ("آن یکی", "همون که گفتم", "it" / "that one"), and to keep a natural,
-continuous conversation — not just isolated one-off commands.
-
-Always respond in same language as user. Return ONLY valid JSON, nothing else."""
+IMPORTANT RULES:
+- For YouTube video requests → always use youtube_play (NOT youtube_search)
+- For Spotify song requests → use spotify_play
+- For any website → use browser_open
+- Always respond in same language as the user
+- Return ONLY valid JSON, no markdown, no extra text
+- Use CONVERSATION HISTORY for context and follow-up references
+"""
 
 def find_claude_command():
-    """
-    سعی می‌کنه مسیر claude.cmd رو پیدا کنه، چون بستگی به اینکه برنامه چطور
-    اجرا شده (CMD/VS Code Run/شورتکات)، PATH ممکنه شامل npm global نباشه.
-    """
     candidates = [
-        "claude",  # اگه توی PATH باشه (حالت ایده‌آل)
+        "claude",
         os.path.expandvars(r"%APPDATA%\npm\claude.cmd"),
         os.path.expanduser(r"~\AppData\Roaming\npm\claude.cmd"),
     ]
-    for candidate in candidates:
-        if candidate == "claude":
-            # چک کن آیا توی PATH واقعاً موجوده
+    for c in candidates:
+        if c == "claude":
             found = shutil.which("claude") or shutil.which("claude.cmd")
-            if found:
-                return found
-        elif os.path.exists(candidate):
-            return candidate
-    # اگه هیچی پیدا نشد، همون "claude" رو برمی‌گردونیم تا پیام خطای روشن بدیم
+            if found: return found
+        elif os.path.exists(c):
+            return c
     return "claude"
 
 CLAUDE_CMD_PATH = find_claude_command()
-
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rasco_debug.log")
 
-def log_debug(message):
-    print(message)
+def log_debug(msg):
+    print(msg)
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {message}\n")
-    except Exception:
-        pass
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+    except Exception: pass
 
-def ask_claude_code(cmd, history=None):
+def ask_claude(cmd, history=None):
     history_text = ""
     if history:
-        for role, msg in history[-10:]:  # فقط ۱۰ پیام آخر برای جلوگیری از سنگین شدن
+        for role, msg in history[-10:]:
             history_text += f"\n{role}: {msg}\n"
-
     full_prompt = (
         SYSTEM_PROMPT
-        + "\n\n=== CONVERSATION HISTORY (most recent first context) ===\n" + history_text
-        + "\n\n=== NEW COMMAND ===\nUser command: " + cmd
-        + "\n\nRespond with ONLY the JSON object, no markdown fences, no extra text."
+        + "\n\n=== CONVERSATION HISTORY ===\n" + history_text
+        + "\n\n=== NEW COMMAND ===\nUser: " + cmd
+        + "\n\nRespond with ONLY the JSON object."
     )
-    log_debug(f"[DEBUG] Using claude command path: {CLAUDE_CMD_PATH!r}")
-    log_debug(f"[DEBUG] Sending to claude: {cmd!r}")
+    log_debug(f"[DEBUG] cmd={cmd!r}")
     try:
         result = subprocess.run(
             f'"{CLAUDE_CMD_PATH}" -p --model {CLAUDE_MODEL}',
-            input=full_prompt,
-            capture_output=True, text=True, encoding="utf-8", timeout=90,
-            shell=True  # 'claude' is a .ps1/.cmd shim on Windows
+            input=full_prompt, capture_output=True, text=True,
+            encoding="utf-8", timeout=90, shell=True
         )
     except subprocess.TimeoutExpired:
-        log_debug("[DEBUG] TimeoutExpired")
-        raise Exception("Claude Code خیلی طول کشید. دوباره امتحان کن.")
+        raise Exception("Claude Code خیلی طول کشید.")
     except FileNotFoundError:
-        log_debug("[DEBUG] FileNotFoundError")
-        raise Exception("دستور 'claude' پیدا نشد. مطمئن شو Claude Code نصب و لاگین شده.")
+        raise Exception("دستور 'claude' پیدا نشد.")
     except Exception as e:
-        log_debug(f"[DEBUG] Unexpected subprocess error: {type(e).__name__}: {e}")
-        raise Exception(f"خطای ناشناخته در اجرای claude: {e}")
+        raise Exception(f"خطا در اجرای claude: {e}")
 
-    log_debug(f"[DEBUG] returncode={result.returncode}")
-    log_debug(f"[DEBUG] stdout={result.stdout!r}")
-    log_debug(f"[DEBUG] stderr={result.stderr!r}")
-
+    log_debug(f"[DEBUG] rc={result.returncode} out={result.stdout[:200]!r}")
     if result.returncode != 0:
-        err = (result.stderr or "خطای نامشخص").strip()
-        raise Exception(f"Claude Code خطا داد (کد {result.returncode}): {err[:200]}")
+        raise Exception(f"Claude خطا داد: {(result.stderr or '').strip()[:200]}")
 
     text = (result.stdout or "").strip()
-    text = text.replace("```json", "").replace("```", "").strip()
+    text = text.replace("```json","").replace("```","").strip()
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # اگه مدل JSON کامل برنگردوند، یه speak_only میسازیم
-        return {"action": "speak_only", "params": {}, "response": text[:300] if text else "متوجه نشدم (جواب خالی بود)."}
+        return {"action":"speak_only","params":{},"response": text[:300] or "متوجه نشدم."}
 
 # ============================================================
 # ACTIONS
 # ============================================================
 def execute_action(data, confirm_callback=None):
-    """confirm_callback(message) -> bool, used to ask user before destructive actions (e.g. delete)."""
     action = data.get("action","")
-    p = data.get("params",{})
-    resp = data.get("response","انجام شد")
+    p      = data.get("params",{})
+    resp   = data.get("response","انجام شد.")
     try:
-        if action == "open_website":
-            u = p.get("url","https://google.com")
-            webbrowser.open(u if u.startswith("http") else "https://"+u)
+        if action == "youtube_play":
+            result = youtube_play(p.get("query",""))
+            resp = resp + " " + result
+
         elif action == "youtube_search":
-            webbrowser.open("https://www.youtube.com/results?search_query="+p.get("query","").replace(" ","+"))
+            q = p.get("query","")
+            browser_navigate("https://www.youtube.com/results?search_query=" + q.replace(" ","+"))
+
+        elif action == "spotify_play":
+            result = spotify_play(p.get("query",""))
+            resp = result
+
+        elif action == "browser_open":
+            url = p.get("url","https://google.com")
+            if not url.startswith("http"): url = "https://" + url
+            browser_navigate(url)
+
+        elif action == "browser_click":
+            t = p.get("type","css")
+            if t == "text":
+                browser_click_text(p.get("selector",""))
+            else:
+                browser_click_selector(p.get("selector",""))
+
+        elif action == "browser_type":
+            browser_type(p.get("selector","body"), p.get("text",""))
+
+        elif action == "browser_scroll":
+            direction = p.get("direction","down")
+            amount    = int(p.get("amount", 3)) * 300
+            if direction == "up": amount = -amount
+            browser_js(f"window.scrollBy(0, {amount})")
+
+        elif action == "browser_js":
+            browser_js(p.get("script",""))
+
+        elif action == "google_search":
+            q = p.get("query","")
+            browser_navigate("https://www.google.com/search?q=" + q.replace(" ","+"))
+
         elif action == "open_app":
             app = p.get("app","").lower()
-            mp = {
-                "chrome":"chrome","firefox":"firefox","notepad":"notepad",
-                "calculator":"calc","calc":"calc","paint":"mspaint",
-                "explorer":"explorer","my computer":"explorer","this pc":"explorer",
-                "cmd":"cmd","vlc":"vlc","spotify":"spotify",
-                "word":"winword","excel":"excel","vscode":"code","vs code":"code",
-                "task manager":"taskmgr","taskmgr":"taskmgr",
-            }
-            subprocess.Popen(mp.get(app, app), shell=True)
+            mp = {"chrome":"chrome","firefox":"firefox","notepad":"notepad",
+                  "calculator":"calc","calc":"calc","paint":"mspaint",
+                  "explorer":"explorer","cmd":"cmd","vlc":"vlc","spotify":"spotify",
+                  "word":"winword","excel":"excel","vscode":"code","vs code":"code",
+                  "task manager":"taskmgr","taskmgr":"taskmgr"}
+            subprocess.Popen(mp.get(app,app), shell=True)
+
         elif action == "open_drive":
-            drive = p.get("drive") or p.get("letter") or p.get("path") or "C"
-            drive = str(drive).strip().upper().rstrip(":\\/")
+            drive = str(p.get("drive","C")).strip().upper().rstrip(":\\/")
             os.startfile(f"{drive}:\\")
+
         elif action == "open_folder":
-            path = p.get("path", os.path.expanduser("~"))
-            os.startfile(path)
-        elif action == "open_gmail":
-            webbrowser.open("https://mail.google.com")
+            os.startfile(p.get("path", os.path.expanduser("~")))
+
         elif action == "copy_file":
-            src = p.get("source") or p.get("src") or p.get("path")
-            dst = p.get("destination") or p.get("dest") or p.get("to")
-            if not src or not dst:
-                resp = "مسیر مبدا یا مقصد مشخص نیست."
-            elif not os.path.exists(src):
-                resp = f"فایل پیدا نشد: {src}"
-            else:
-                if os.path.isdir(dst):
-                    shutil.copy2(src, dst)
-                else:
-                    shutil.copy2(src, dst)
-                resp = resp or f"کپی شد به {dst}"
+            src = p.get("source") or p.get("src")
+            dst = p.get("destination") or p.get("dest")
+            if src and dst and os.path.exists(src):
+                shutil.copy2(src, dst)
+
         elif action == "move_file":
-            src = p.get("source") or p.get("src") or p.get("path")
-            dst = p.get("destination") or p.get("dest") or p.get("to")
-            if not src or not dst:
-                resp = "مسیر مبدا یا مقصد مشخص نیست."
-            elif not os.path.exists(src):
-                resp = f"فایل پیدا نشد: {src}"
-            else:
+            src = p.get("source") or p.get("src")
+            dst = p.get("destination") or p.get("dest")
+            if src and dst and os.path.exists(src):
                 shutil.move(src, dst)
-                resp = resp or f"منتقل شد به {dst}"
+
         elif action == "delete_file":
             target = p.get("path") or p.get("source")
-            if not target:
-                resp = "مسیر فایل مشخص نیست."
-            elif not os.path.exists(target):
-                resp = f"فایل پیدا نشد: {target}"
-            else:
-                allowed = True
-                if confirm_callback:
-                    allowed = confirm_callback(f"مطمئنی می‌خوای حذف کنی؟\n{target}")
-                if allowed:
-                    if os.path.isdir(target):
-                        shutil.rmtree(target)
-                    else:
-                        os.remove(target)
-                    resp = resp or "حذف شد."
+            if target and os.path.exists(target):
+                ok = confirm_callback(f"مطمئنی حذف کنم؟\n{target}") if confirm_callback else True
+                if ok:
+                    (shutil.rmtree if os.path.isdir(target) else os.remove)(target)
                 else:
                     resp = "حذف لغو شد."
+
         elif action == "type_text":
             time.sleep(0.5)
             pyautogui.typewrite(p.get("text",""), interval=0.05)
+
         elif action == "press_key":
             k = p.get("key","").split("+")
             pyautogui.hotkey(*k) if len(k)>1 else pyautogui.press(k[0])
+
         elif action == "take_screenshot":
             s = pyautogui.screenshot()
             path = os.path.join(os.path.expanduser("~"),"Desktop",f"rasco_{int(time.time())}.png")
             s.save(path)
-            resp += f" — ذخیره روی دسکتاپ"
-        elif action == "search_web":
-            webbrowser.open("https://www.google.com/search?q="+p.get("query","").replace(" ","+"))
+            resp += " — ذخیره روی دسکتاپ"
+
         elif action == "volume_up":
             pyautogui.press('volumeup', presses=5)
+
         elif action == "volume_down":
             pyautogui.press('volumedown', presses=5)
+
         elif action == "minimize_window":
             pyautogui.hotkey('win','down')
+
         elif action == "close_window":
             pyautogui.hotkey('alt','f4')
+
         elif action == "speak_only":
             pass
+
         else:
-            resp += f" (دستور '{action}' هنوز پشتیبانی نمیشه)"
+            resp += f" (اکشن '{action}' هنوز پشتیبانی نمیشه)"
+
     except Exception as e:
         resp = f"خطا: {e}"
     return resp
+
+# ============================================================
+# DIGITAL SKULL FACE — canvas drawing helpers
+# ============================================================
+
+def _a(color, alpha_hex):
+    """Simulate color+alpha blended on black — returns valid tkinter color."""
+    color = color.lstrip('#')
+    r,g,b = int(color[0:2],16), int(color[2:4],16), int(color[4:6],16)
+    a = int(alpha_hex, 16) / 255
+    return f'#{int(r*a):02x}{int(g*a):02x}{int(b*a):02x}'
+
+STATE_COLORS = {
+    'idle':      {'main':'#00ffe0','dark':'#003330','mid':'#009980','dim':'#002220'},
+    'listening': {'main':'#00ff88','dark':'#003320','mid':'#00bb55','dim':'#002215'},
+    'thinking':  {'main':'#a855f7','dark':'#2a0050','mid':'#7722cc','dim':'#1a0035'},
+    'talking':   {'main':'#f0c040','dark':'#3a2800','mid':'#b08020','dim':'#251a00'},
+    'error':     {'main':'#ff2255','dark':'#3a0010','mid':'#cc1040','dim':'#250008'},
+}
+
+def _hex_pts(cx, cy, r, angle_deg=0):
+    pts = []
+    for i in range(6):
+        a = math.radians(60*i + angle_deg)
+        pts.append(cx + r*math.cos(a))
+        pts.append(cy + r*math.sin(a))
+    return pts
+
+def _bezier(p0, p1, p2, p3, n=22):
+    pts = []
+    for i in range(n+1):
+        tt = i/n
+        x = (1-tt)**3*p0[0]+3*(1-tt)**2*tt*p1[0]+3*(1-tt)*tt**2*p2[0]+tt**3*p3[0]
+        y = (1-tt)**3*p0[1]+3*(1-tt)**2*tt*p1[1]+3*(1-tt)*tt**2*p2[1]+tt**3*p3[1]
+        pts += [x, y]
+    return pts
+
+def _multi_oval(c, x1,y1,x2,y2, color, steps=4):
+    for i in range(steps, 0, -1):
+        pad = i*4
+        c.create_oval(x1-pad,y1-pad,x2+pad,y2+pad, fill='', outline=color, width=1)
+
+def _draw_skull(c, cx, cy, angle, face_state, talk_phase):
+    c.delete("all")
+    col = STATE_COLORS.get(face_state, STATE_COLORS['idle'])
+    M, D, MID, DIM = col['main'], col['dark'], col['mid'], col['dim']
+    bounce = math.sin(math.radians(angle*2.5)) * 4
+
+    # background — faint grid
+    for gx in range(0, 440, 28):
+        c.create_line(gx, 0, gx, 470, fill='#0a0a0a', width=1)
+    for gy in range(0, 470, 28):
+        c.create_line(0, gy, 440, gy, fill='#0a0a0a', width=1)
+
+    hx, hy = cx, cy + bounce
+
+    # ── ambient glow rings ──
+    for r, col_a in [(160,DIM),(120,D),(80,'#050505')]:
+        c.create_oval(hx-r, hy-r-30, hx+r, hy+r-30, fill=col_a, outline='')
+
+    # ── SKULL cranium — bezier polygon ──
+    skull_pts = (
+        _bezier((hx-105,hy+10),(hx-115,hy-30),(hx-110,hy-110),(hx-70,hy-148)) +
+        _bezier((hx-70,hy-148),(hx-35,hy-183),(hx+35,hy-183),(hx+70,hy-148)) +
+        _bezier((hx+70,hy-148),(hx+110,hy-110),(hx+115,hy-30),(hx+105,hy+10)) +
+        _bezier((hx+105,hy+10),(hx+88,hy+52),(hx+50,hy+66),(hx,hy+70)) +
+        _bezier((hx,hy+70),(hx-50,hy+66),(hx-88,hy+52),(hx-105,hy+10))
+    )
+    # pre-compute alpha variants (blended on black)
+    M44=_a(M,'44'); M18=_a(M,'18'); M30=_a(M,'30'); M66=_a(M,'66')
+    M22=_a(M,'22'); M88=_a(M,'88'); M55=_a(M,'55'); M99=_a(M,'99')
+    M33=_a(M,'33'); MID88=_a(MID,'88')
+
+    c.create_polygon(*skull_pts, fill='#0c0c0c', outline=MID, width=1, smooth=False)
+    c.create_polygon(*skull_pts, fill='', outline=M44, width=3, smooth=False)
+    c.create_polygon(*skull_pts, fill='', outline=M18, width=7, smooth=False)
+
+    # ── circuit lines ──
+    circuits = [
+        [(hx-20,hy-168),(hx-20,hy-138),(hx-52,hy-138),(hx-52,hy-118)],
+        [(hx+20,hy-168),(hx+20,hy-138),(hx+52,hy-138),(hx+52,hy-118)],
+        [(hx-82,hy-98),(hx-100,hy-98),(hx-100,hy-68)],
+        [(hx+82,hy-98),(hx+100,hy-98),(hx+100,hy-68)],
+        [(hx,hy-178),(hx,hy-152),(hx-26,hy-152)],
+        [(hx,hy-178),(hx,hy-152),(hx+26,hy-152)],
+        [(hx-62,hy-158),(hx-62,hy-128)],
+        [(hx+62,hy-158),(hx+62,hy-128)],
+    ]
+    for path in circuits:
+        flat = [v for pt in path for v in pt]
+        c.create_line(*flat, fill=M30, width=1)
+        for px, py in path:
+            c.create_oval(px-2,py-2,px+2,py+2, fill=M66, outline='')
+
+    # ── scanning line ──
+    scan_y = (hy-180) + (angle * 1.1 % 260)
+    c.create_line(hx-112, scan_y, hx+112, scan_y, fill=M22, width=1)
+
+    # ── EYES ──
+    eye_y = hy - 58
+    for side in (-1, 1):
+        ex = hx + side*52
+
+        # rotating hex rings
+        for ring_r, ring_a_mult, a_hex in [(30, 0.3, '30'), (24, 0.5, '28'), (18, 0.0, '20')]:
+            pts = _hex_pts(ex, eye_y, ring_r, angle * ring_a_mult * side)
+            c.create_polygon(*pts, fill='', outline=_a(M,a_hex), width=1)
+
+        # socket darkness
+        c.create_oval(ex-23,eye_y-17,ex+23,eye_y+17, fill='#000000', outline='')
+
+        # eye glow layers
+        for r, a_hex in [(20,'66'),(14,'99'),(8,'cc'),(4,'ff')]:
+            c.create_oval(ex-r,eye_y-int(r*0.72),ex+r,eye_y+int(r*0.72), fill=D, outline=_a(M,a_hex), width=1)
+
+        # iris spokes (rotate)
+        for spoke in range(8):
+            a = math.radians(45*spoke + angle*0.8*side)
+            x1,y1 = ex+9*math.cos(a), eye_y+9*math.sin(a)*0.7
+            x2,y2 = ex+15*math.cos(a), eye_y+15*math.sin(a)*0.7
+            c.create_line(x1,y1,x2,y2, fill=M88, width=1)
+
+        # pupil
+        c.create_oval(ex-5,eye_y-4,ex+5,eye_y+4, fill='#000', outline=M, width=2)
+
+        # scan line (thinking)
+        if face_state == 'thinking':
+            sy = eye_y - 15 + (angle*1.5 % 30)
+            c.create_line(ex-20,sy,ex+20,sy, fill=M55, width=1)
+
+        # bloom glow
+        _multi_oval(c, ex-20,eye_y-14,ex+20,eye_y+14, M22, 5)
+
+        # corner brackets on eye
+        for bx2, by2, sx2, sy2 in [(-23,-17,1,1),(-23,17,1,-1),(23,-17,-1,1),(23,17,-1,-1)]:
+            c.create_line(ex+bx2+sx2*9,eye_y+by2, ex+bx2,eye_y+by2, fill=M99, width=1)
+            c.create_line(ex+bx2,eye_y+by2, ex+bx2,eye_y+by2+sy2*7, fill=M99, width=1)
+
+    # ── nose cavity ──
+    nose_pts = _bezier((hx,hy-8),(hx-14,hy+4),(hx-18,hy+22),(hx-8,hy+29)) + \
+               [(hx,hy+26)] + \
+               list(reversed(_bezier((hx+8,hy+29),(hx+18,hy+22),(hx+14,hy+4),(hx,hy-8))))
+    c.create_polygon(*nose_pts, fill='#000000', outline=M33, width=1)
+    for ns in (-1,1):
+        c.create_oval(hx+ns*6-8,hy+24-7,hx+ns*6+8,hy+24+7, fill=D, outline=M66, width=1)
+
+    # ── cheekbone plates ──
+    for side in (-1,1):
+        px, py = hx+side*79, hy-5
+        pts2 = [px-side*5,py-14, px+side*22,py-10, px+side*24,py+10, px-side*5,py+14]
+        c.create_polygon(*pts2, fill='#0e0e0e', outline=M55, width=1)
+        c.create_oval(px+side*6-3,py-3,px+side*6+3,py+3, fill=MID88, outline='')
+
+    # ── temporal hex implants ──
+    for side in (-1,1):
+        ix, iy = hx+side*103, hy-78
+        pts3 = _hex_pts(ix, iy, 14, angle*0.9*side)
+        c.create_polygon(*pts3, fill='#080808', outline=M, width=1)
+        pulse = abs(math.sin(math.radians(angle*3.5 + side*90)))
+        inner_col = M if pulse > 0.5 else D
+        c.create_oval(ix-5,iy-5,ix+5,iy+5, fill=inner_col, outline='')
+
+    # ── JAW & TEETH ──
+    jaw_pts = (
+        _bezier((hx-90,hy+55),(hx-90,hy+100),(hx-50,hy+128),(hx,hy+136)) +
+        _bezier((hx,hy+136),(hx+50,hy+128),(hx+90,hy+100),(hx+90,hy+55))
+    )
+    c.create_polygon(*jaw_pts, fill='#070707', outline=M33, width=1, smooth=False)
+
+    # teeth
+    t_count, t_w, t_gap = 7, 13, 2
+    total_tw = t_count*(t_w+t_gap)-t_gap
+    t_y = hy + 58
+    for i in range(t_count):
+        tx = hx - total_tw//2 + i*(t_w+t_gap)
+        th = 13 if (i==0 or i==t_count-1) else 17
+        c.create_rectangle(tx, t_y, tx+t_w, t_y+th, fill='#c8c4b4', outline='#666655', width=1)
+        c.create_rectangle(tx, t_y, tx+t_w, t_y+3, fill='#ffffff', outline='')
+
+    m_open = 0
+    if face_state == 'talking':
+        m_open = int(5 + 12*abs(math.sin(math.radians(talk_phase*8))))
+    elif face_state == 'error':
+        m_open = 16
+
+    if m_open > 0:
+        c.create_rectangle(hx-total_tw//2, t_y+17, hx+total_tw//2+t_w, t_y+17+m_open, fill='#000', outline='')
+        for i in range(t_count):
+            tx = hx - total_tw//2 + i*(t_w+t_gap)
+            c.create_rectangle(tx, t_y+18+m_open, tx+t_w, t_y+30+m_open, fill='#b4b0a0', outline='#555544', width=1)
+        c.create_oval(hx-16,t_y+14+m_open//2, hx+16,t_y+22+m_open//2, fill=D, outline=M66, width=1)
+
+    # ── forehead center diamond ──
+    d_cx, d_cy = hx, hy-172
+    sz = 9
+    pts_diamond2 = []
+    for i in range(4):
+        a = math.radians(45+90*i)
+        pts_diamond2 += [d_cx+sz*math.cos(a), d_cy+sz*math.sin(a)]
+    c.create_polygon(*pts_diamond2, fill='#0a0a0a', outline=M, width=1)
+    pulse_d = abs(math.sin(math.radians(angle*7)))
+    inner_sz = 5*pulse_d
+    c.create_oval(d_cx-inner_sz,d_cy-inner_sz,d_cx+inner_sz,d_cy+inner_sz, fill=M, outline='')
+
+    # vertical center line
+    c.create_line(hx, hy-172, hx, hy-115, fill=M22, width=1)
+
+    # ── glitch (error) ──
+    if face_state == 'error' and random.random() < 0.12:
+        gy = random.randint(0, 470)
+        c.create_rectangle(0, gy, 440, gy+random.randint(3,16), fill='#1a0008', outline='')
+
+    # ── state HUD bar ──
+    state_map = {
+        'idle':      ('STANDBY', M),
+        'listening': ('LISTENING', M),
+        'thinking':  ('PROCESSING', M),
+        'talking':   ('TALKING', M),
+        'error':     ('ERROR', M),
+    }
+    lbl, lbl_col = state_map.get(face_state, ('STANDBY', M))
+    bar_y = hy + 168
+    c.create_rectangle(hx-82,bar_y-12,hx+82,bar_y+12, fill='#060606', outline=M55, width=1)
+    pulse_dot = abs(math.sin(math.radians(angle*6)))
+    dot_r = 4*pulse_dot + 2
+    c.create_oval(hx-70-dot_r,bar_y-dot_r,hx-70+dot_r,bar_y+dot_r, fill=M, outline='')
+    c.create_text(hx+6, bar_y, text=lbl, fill=lbl_col, font=('Courier New',9,'bold'))
+
+    # ── corner HUD brackets ──
+    c.create_line(18,18, 18,44, fill=M33, width=1)
+    c.create_line(18,18, 44,18, fill=M33, width=1)
+    c.create_line(422,18, 422,44, fill=M33, width=1)
+    c.create_line(422,18, 396,18, fill=M33, width=1)
+    c.create_line(18,452, 18,426, fill=M33, width=1)
+    c.create_line(18,452, 44,452, fill=M33, width=1)
+    c.create_line(422,452, 422,426, fill=M33, width=1)
+    c.create_line(422,452, 396,452, fill=M33, width=1)
+
+    # version text
+    c.create_text(28, 12, text='RASCO v2.0', fill=M44, font=('Courier New',7), anchor='w')
+
+def _draw_doberman(c, cx, cy, angle, face_state, talk_phase):
+    """
+    Draws a detailed, beautiful robotic Doberman face on canvas c.
+    cx, cy = center point, angle = animation tick, face_state = mood string.
+    """
+    c.delete("all")
+
+    # Color palette
+    FUR      = "#1a1a1a"
+    FUR_MID  = "#222222"
+    FUR_D    = "#000000"
+    TAN      = "#8B5E3C"
+    TAN_L    = "#C47A3A"
+    METAL    = "#444444"
+    METAL_L  = "#666666"
+    LENS     = "#050d0f"
+    RIM      = GOLD
+    GLOW_COL = GREEN if face_state == "listening" else (RED if face_state == "error" else GOLD_L)
+
+    bounce = math.sin(math.radians(angle * 2.2)) * 3
+    hy     = cy + bounce
+
+    # ── subtle ambient glow ring ──────────────────────────────
+    glow_r = 175
+    glow_color = "#1a1200" if face_state == "idle" else (
+        "#001a08" if face_state == "listening" else (
+        "#1a0008" if face_state == "error" else "#1a1200"))
+    c.create_oval(cx-glow_r, hy-glow_r, cx+glow_r, hy+glow_r,
+                  outline=glow_color, width=40)
+
+    # ── SKULL ─────────────────────────────────────────────────
+    HW, HH = 88, 75
+    skull_cy = hy - 18
+
+    # shadow beneath head
+    c.create_oval(cx-HW+8, skull_cy-HH+10, cx+HW-8, skull_cy+HH+30,
+                  fill="#000000", outline="")
+
+    # skull gradient layers (dark→lighter toward center)
+    for r_off, shade in [(0,"#1a1a1a"),(-5,"#202020"),(-10,"#262626")]:
+        c.create_oval(cx-HW+r_off, skull_cy-HH+r_off,
+                      cx+HW-r_off, skull_cy+HH-r_off,
+                      fill=shade, outline="")
+    c.create_oval(cx-HW, skull_cy-HH, cx+HW, skull_cy+HH,
+                  fill="", outline=METAL, width=2)
+
+    # chrome bolts on sides of skull
+    for side in (-1,1):
+        bx = cx + side*(HW-10)
+        by = skull_cy
+        c.create_oval(bx-5,by-5,bx+5,by+5, fill=METAL_L, outline=GOLD_D, width=1)
+        c.create_oval(bx-2,by-2,bx+2,by+2, fill=GOLD_D, outline="")
+
+    # ── EARS ─────────────────────────────────────────────────
+    for side in (-1,1):
+        bx  = cx + side * HW*0.52
+        by  = skull_cy - HH*0.5
+        tip_x = cx + side * (HW*0.82)
+        tip_y = skull_cy - HH*1.6
+        # ear shadow
+        c.create_polygon(
+            bx+side*2, by-12, bx+side*38, by+32, tip_x+side*3, tip_y+4,
+            fill=FUR_D, outline=""
+        )
+        # main ear
+        c.create_polygon(
+            bx, by-14, bx+side*36, by+32, tip_x, tip_y,
+            fill=FUR, outline=METAL, width=2
+        )
+        # inner ear (tan)
+        c.create_polygon(
+            bx+side*4, by-4, bx+side*24, by+20, tip_x+side*(-4)*side, tip_y+20,
+            fill=TAN, outline=""
+        )
+        # ear tip highlight
+        c.create_oval(tip_x-3, tip_y-3, tip_x+3, tip_y+3,
+                      fill=METAL_L, outline="")
+
+    # ── FOREHEAD PLATES (cyberpunk detail) ────────────────────
+    for i, (px_off, pw) in enumerate([(-20,40),(0,22)]):
+        plate_y = skull_cy - HH*0.75 + i*14
+        c.create_rectangle(cx+px_off-pw//2, plate_y-4, cx+px_off+pw//2, plate_y+4,
+                           fill=METAL, outline=GOLD_D, width=1)
+    # center diamond
+    pts = [cx, skull_cy-HH*0.6-8, cx+6, skull_cy-HH*0.6,
+           cx, skull_cy-HH*0.6+8, cx-6, skull_cy-HH*0.6]
+    c.create_polygon(*pts, fill=GOLD_D, outline=GOLD_L, width=1)
+
+    # ── EYEBROW RUST SPOTS ────────────────────────────────────
+    for side in (-1,1):
+        ex = cx + side*HW*0.42
+        ey = skull_cy - HH*0.28
+        c.create_oval(ex-12, ey-8, ex+12, ey+8, fill=TAN, outline="")
+        c.create_oval(ex-6,  ey-3, ex+6,  ey+3, fill=TAN_L, outline="")
+
+    # ── MUZZLE ────────────────────────────────────────────────
+    muz_w   = HW * 0.70
+    muz_top = skull_cy + HH * 0.52
+    muz_bot = skull_cy + HH * 1.82
+
+    # muzzle shadow
+    c.create_rectangle(cx-muz_w+4, muz_top+4, cx+muz_w+4, muz_bot+8,
+                       fill=FUR_D, outline="")
+    # muzzle body
+    c.create_rectangle(cx-muz_w, muz_top, cx+muz_w, muz_bot,
+                       fill=FUR_MID, outline=METAL, width=2)
+    # muzzle top edge highlight
+    c.create_line(cx-muz_w+4, muz_top+2, cx+muz_w-4, muz_top+2,
+                  fill=METAL_L, width=1)
+
+    # corner rounds
+    for sx, sy, start in [(-1,-1,90),(-1,1,180),(1,-1,0),(1,1,270)]:
+        ox = cx + sx*muz_w
+        oy = muz_top if sy==-1 else muz_bot
+        c.create_arc(ox+sx*(-28), oy+sy*(-20), ox, oy+sy*20,
+                     start=start, extent=90, outline=METAL, style="arc", width=2)
+
+    # tan cheek patches
+    for side in (-1,1):
+        px = cx + side*muz_w*0.62
+        c.create_rectangle(px-side*36, muz_top+6, px, muz_bot-4,
+                           fill=TAN, outline="")
+        c.create_rectangle(px-side*20, muz_top+14, px-side*6, muz_bot-12,
+                           fill=TAN_L, outline="")
+
+    # ── SUNGLASSES ────────────────────────────────────────────
+    bridge_y = muz_top - 6
+    eye_dx   = HW * 0.40
+    LW, LH   = 34, 20
+
+    for side in (-1,1):
+        ex = cx + side*eye_dx
+        # lens shadow
+        c.create_oval(ex-LW//2+3, bridge_y-LH//2+3,
+                      ex+LW//2+3, bridge_y+LH//2+3, fill=FUR_D, outline="")
+        # lens body
+        c.create_oval(ex-LW//2, bridge_y-LH//2, ex+LW//2, bridge_y+LH//2,
+                      fill=LENS, outline=RIM, width=3)
+        # lens shine
+        c.create_oval(ex-LW//2+5, bridge_y-LH//2+4,
+                      ex-LW//2+14, bridge_y-LH//2+10,
+                      fill=GOLD_G, outline="")
+        # glow ring around lens (mood indicator)
+        if face_state != "idle":
+            c.create_oval(ex-LW//2-3, bridge_y-LH//2-3,
+                          ex+LW//2+3, bridge_y+LH//2+3,
+                          outline=GLOW_COL, width=2)
+
+    # bridge
+    c.create_line(cx-eye_dx+LW//2-2, bridge_y,
+                  cx+eye_dx-LW//2+2, bridge_y,
+                  fill=RIM, width=3)
+    # temples
+    for side in (-1,1):
+        ex = cx + side*eye_dx
+        c.create_line(ex+side*LW//2, bridge_y,
+                      ex+side*(LW//2+22), bridge_y-4,
+                      fill=RIM, width=2)
+
+    # ── EYEBROW GLOW (mood) ────────────────────────────────────
+    brow_y = bridge_y - LH//2 - 9
+    brow_tilt = 0
+    if face_state == "error":    brow_tilt = 7
+    elif face_state == "thinking": brow_tilt = 3
+    for side in (-1,1):
+        ex = cx + side*eye_dx
+        y1 = brow_y + brow_tilt*side
+        y2 = brow_y - brow_tilt*side
+        glow_w = 3 if face_state != "idle" else 2
+        c.create_line(ex-12, y1, ex+12, y2,
+                      fill=GLOW_COL, width=glow_w, capstyle="round")
+
+    # ── NOSE ──────────────────────────────────────────────────
+    nose_y = muz_bot - 12
+    c.create_oval(cx-14, nose_y-11, cx+14, nose_y+9,
+                  fill=FUR_D, outline=GOLD_D, width=2)
+    # nose bridge ridge
+    c.create_line(cx-4, nose_y-8, cx+4, nose_y-8, fill=METAL_L, width=2)
+    # nostril highlights
+    for nside in (-1,1):
+        c.create_oval(cx+nside*5-3, nose_y-3, cx+nside*5+3, nose_y+3,
+                      fill="#111111", outline="")
+    # nose shine
+    c.create_oval(cx-5, nose_y-9, cx, nose_y-4, fill=GOLD_L, outline="")
+
+    # ── MOUTH ─────────────────────────────────────────────────
+    mouth_y = muz_top + (muz_bot-muz_top)*0.52
+    mouth_w = 24
+
+    if face_state == "talking":
+        open_amt = 6 + 7*abs(math.sin(talk_phase * 0.55))
+        # teeth
+        c.create_oval(cx-mouth_w//2, mouth_y-open_amt//2,
+                      cx+mouth_w//2, mouth_y+open_amt//2,
+                      fill=FUR_D, outline=GOLD_D, width=2)
+        # upper teeth line
+        if open_amt > 5:
+            c.create_rectangle(cx-10, mouth_y-open_amt//2+2,
+                               cx+10, mouth_y-open_amt//2+6,
+                               fill=WHITE, outline="")
+    elif face_state == "listening":
+        c.create_oval(cx-mouth_w//3, mouth_y-6,
+                      cx+mouth_w//3, mouth_y+6,
+                      fill=FUR_D, outline=GOLD_D, width=2)
+    elif face_state == "thinking":
+        c.create_line(cx-mouth_w//2, mouth_y+2, cx+mouth_w//2, mouth_y-4,
+                      fill=GOLD_D, width=3, capstyle="round")
+        c.create_oval(cx+mouth_w//2-4, mouth_y-8,
+                      cx+mouth_w//2+4, mouth_y,
+                      fill=GOLD_D, outline="")
+    elif face_state == "error":
+        c.create_line(cx-mouth_w//2, mouth_y+6, cx+mouth_w//2, mouth_y-6,
+                      fill=RED, width=3, capstyle="round")
+    else:  # idle smirk
+        c.create_line(cx-mouth_w//2, mouth_y+1, cx, mouth_y+4,
+                      fill=GOLD_D, width=3, capstyle="round")
+        c.create_line(cx, mouth_y+4, cx+mouth_w//2, mouth_y-7,
+                      fill=GOLD_D, width=3, capstyle="round")
+
+    # ── WHISKER DOTS ──────────────────────────────────────────
+    for side in (-1,1):
+        for i, (wy_off, wx_off) in enumerate([(-6,-18),(-1,-22),(5,-16)]):
+            wx = cx + side*(muz_w*0.55+wx_off)
+            wy = mouth_y + wy_off
+            c.create_oval(wx-2, wy-2, wx+2, wy+2, fill=METAL_L, outline="")
+
+    # ── COLLAR ────────────────────────────────────────────────
+    collar_y = muz_bot + 20
+    # collar band
+    c.create_arc(cx-HW*1.18, collar_y-24, cx+HW*1.18, collar_y+32,
+                 start=198, extent=144, outline=GOLD_D, width=10, style="arc")
+    c.create_arc(cx-HW*1.18, collar_y-24, cx+HW*1.18, collar_y+32,
+                 start=198, extent=144, outline=GOLD, width=4, style="arc")
+    # collar studs
+    for angle_deg in [220, 250, 270, 290, 320]:
+        rad   = math.radians(angle_deg)
+        sx    = cx + int(HW*1.1 * math.cos(rad))
+        sy    = (collar_y+4) + int(28 * math.sin(rad))
+        c.create_oval(sx-4, sy-4, sx+4, sy+4, fill=GOLD_L, outline=GOLD_D, width=1)
+    # dog tag
+    tag_y = collar_y + 30
+    c.create_oval(cx-13, tag_y-2, cx+13, tag_y+20,
+                  fill=GOLD_D, outline=GOLD, width=2)
+    c.create_text(cx, tag_y+9, text="R", fill=GOLD_L, font=("Courier New",8,"bold"))
+
+    # ── STATE INDICATOR ───────────────────────────────────────
+    state_map = {
+        "idle":      ("STANDBY", GOLD_D),
+        "listening": ("LISTENING", GREEN),
+        "thinking":  ("PROCESSING", GOLD),
+        "talking":   ("TALKING", GOLD_L),
+        "error":     ("ERROR", RED),
+    }
+    lbl, col = state_map.get(face_state, ("STANDBY", GOLD_D))
+
+    # pulsing dot before label
+    pulse_r = 4 + 2*abs(math.sin(math.radians(angle*3)))
+    c.create_oval(cx-55-pulse_r, tag_y+26-pulse_r,
+                  cx-55+pulse_r, tag_y+26+pulse_r,
+                  fill=col, outline="")
+    c.create_text(cx+5, tag_y+26, text=lbl, fill=col,
+                  font=("Courier New",9,"bold"))
 
 # ============================================================
 # MAIN APP
@@ -377,21 +974,21 @@ class RascoApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(f"{ASSISTANT_NAME} — AI Desktop Assistant")
-        self.root.geometry("1150x700")
+        try:
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rasco.ico")
+            self.root.iconbitmap(icon_path)
+        except Exception:
+            pass
+        self.root.geometry("1200x720")
         self.root.configure(bg=BG)
         self.root.resizable(True, True)
 
-        self.angle = 0
+        self.angle      = 0
         self.weather_data = {}
         self.processing = False
-
-        # حالت چهره: idle / listening / thinking / talking / error
         self.face_state = "idle"
-        self.blink_timer = 0
         self.talk_phase = 0
-
-        # تاریخچه مکالمه برای یادسپاری گفتگوهای قبلی
-        self.history = []  # list of (role, text) tuples
+        self.history    = []
 
         self.build_ui()
         self.update_clock()
@@ -400,23 +997,18 @@ class RascoApp:
         threading.Thread(target=self._load_weather, daemon=True).start()
 
         self.log("SYS", f"{ASSISTANT_NAME} آماده‌ست. دستورت رو بنویس.")
-        if CLAUDE_CMD_PATH == "claude":
-            self.log("SYS", "⚠️ مسیر claude پیدا نشد به‌صورت دقیق — اگه جواب نگرفتی، فایل rasco_debug.log رو کنار این برنامه چک کن.")
+        if SELENIUM_AVAILABLE:
+            self.log("SYS", "✓ Browser automation فعاله — می‌تونم یوتیوب، Spotify و هر سایتی رو کنترل کنم.")
         else:
-            self.log("SYS", f"موتور Claude Code پیدا شد: {CLAUDE_CMD_PATH}")
-        if mic_is_available():
-            idx = find_input_device()
-            devices = list_input_devices()
-            device_name = next((name for i, name in devices if i == idx), "نامشخص")
-            self.log("SYS", f"میکروفون پیدا شد ({device_name}) — دکمه 🎤 فعاله.")
-        else:
-            self.log("SYS", "میکروفونی پیدا نشد — فقط با تایپ کار می‌کنه. بعد از وصل کردن میکروفون، برنامه رو دوباره باز کن.")
+            self.log("SYS", "⚠ Selenium نصب نیست — browser automation غیرفعاله.")
+        if CLAUDE_CMD_PATH != "claude":
+            self.log("SYS", f"✓ Claude پیدا شد: {CLAUDE_CMD_PATH}")
+
         self.root.after(500, lambda: self._speak_and_animate(f"سلام. من {ASSISTANT_NAME} هستم. آماده‌ام."))
 
     def _load_weather(self):
         self.weather_data = get_weather()
         self.root.after(0, self._refresh_weather)
-        # هر ۱۵ دقیقه آپدیت
         self.root.after(900000, lambda: threading.Thread(target=self._load_weather, daemon=True).start())
 
     def _refresh_weather(self):
@@ -425,19 +1017,20 @@ class RascoApp:
         self.wdesc_lbl.config(text=str(w.get('desc','نامشخص')))
         self.humid_lbl.config(text=f"رطوبت: {w.get('humidity','--')}%  |  باد: {w.get('wind','--')} km/h")
 
-    # ────────────────────────────────────────────────────────
+    # ─── UI BUILD ───────────────────────────────────────────────
     def build_ui(self):
         # TOP BAR
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x")
         tk.Frame(top, bg=GOLD, height=2).pack(fill="x")
-        bar = tk.Frame(top, bg=BG, pady=5)
-        bar.pack(fill="x", padx=16)
-        tk.Label(bar, text="SYSTEM SETTINGS  |  VOICE CORE: Windows",
+        bar = tk.Frame(top, bg=BG, pady=6)
+        bar.pack(fill="x", padx=18)
+
+        tk.Label(bar, text="SYSTEM ONLINE  |  BROWSER ENGINE: SELENIUM",
                  font=("Courier New",7), bg=BG, fg=GOLD_D).pack(side="left")
         tk.Label(bar, text=ASSISTANT_NAME,
-                 font=("Courier New",30,"bold"), bg=BG, fg=GOLD_L).pack(side="left", expand=True)
-        tk.Label(bar, text="Just A Rather Clever Operating System",
+                 font=("Courier New",32,"bold"), bg=BG, fg=GOLD_L).pack(side="left", expand=True)
+        tk.Label(bar, text="Responsive Autonomous System for Comprehensive Operations",
                  font=("Courier New",7), bg=BG, fg=GOLD_D).pack(side="left", expand=True)
         self.online_lbl = tk.Label(bar, text="◉ ONLINE",
                  font=("Courier New",8,"bold"), bg=BG, fg=GREEN)
@@ -448,14 +1041,14 @@ class RascoApp:
         main = tk.Frame(self.root, bg=BG)
         main.pack(fill="both", expand=True, padx=6, pady=4)
 
-        left = tk.Frame(main, bg=BG, width=230)
+        left   = tk.Frame(main, bg=BG, width=235)
         left.pack(side="left", fill="y", padx=(0,5))
         left.pack_propagate(False)
 
         center = tk.Frame(main, bg=BG)
         center.pack(side="left", fill="both", expand=True)
 
-        right = tk.Frame(main, bg=BG, width=295)
+        right  = tk.Frame(main, bg=BG, width=300)
         right.pack(side="left", fill="y", padx=(5,0))
         right.pack_propagate(False)
 
@@ -463,19 +1056,20 @@ class RascoApp:
         self._build_center(center)
         self._build_right(right)
 
-    # ── LEFT ────────────────────────────────────────────────
     def _panel(self, parent, title):
         f = tk.Frame(parent, bg=PANEL)
         f.pack(fill="x", pady=3, padx=2)
         tk.Frame(f, bg=CYAN_D, height=1).pack(fill="x")
-        tk.Label(f, text=title, font=("Courier New",7,"bold"),
-                 bg=PANEL, fg=CYAN, anchor="w", padx=8, pady=3).pack(fill="x")
+        hdr = tk.Frame(f, bg=DARK)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text="▸ " + title, font=("Courier New",7,"bold"),
+                 bg=DARK, fg=GOLD_D, anchor="w", padx=8, pady=3).pack(fill="x")
+        tk.Frame(f, bg=GOLD_D, height=1).pack(fill="x")
         return f
 
     def _build_left(self, p):
-        # TIME
         tf = self._panel(p, "TIME")
-        self.clock_lbl = tk.Label(tf, text="00:00", font=("Courier New",30,"bold"),
+        self.clock_lbl = tk.Label(tf, text="00:00", font=("Courier New",32,"bold"),
                                    bg=PANEL, fg=WHITE, anchor="w", padx=10)
         self.clock_lbl.pack(fill="x")
         self.date_lbl = tk.Label(tf, text="", font=("Courier New",8),
@@ -485,10 +1079,9 @@ class RascoApp:
                                  bg=PANEL, fg=GRAY, anchor="w", padx=10, pady=2)
         self.day_lbl.pack(fill="x")
 
-        # WEATHER
         wf = self._panel(p, f"WEATHER · {CITY_FA}")
-        self.temp_lbl = tk.Label(wf, text="--°C", font=("Courier New",24,"bold"),
-                                  bg=PANEL, fg=CYAN, anchor="w", padx=10)
+        self.temp_lbl = tk.Label(wf, text="--°C", font=("Courier New",26,"bold"),
+                                  bg=PANEL, fg=GOLD, anchor="w", padx=10)
         self.temp_lbl.pack(fill="x")
         self.wdesc_lbl = tk.Label(wf, text="بارگذاری...", font=("Courier New",8),
                                    bg=PANEL, fg=WHITE, anchor="w", padx=10)
@@ -497,23 +1090,20 @@ class RascoApp:
                                    bg=PANEL, fg=GRAY, anchor="w", padx=10, pady=3)
         self.humid_lbl.pack(fill="x")
 
-        # SYSTEM STATUS
         sf = self._panel(p, "SYSTEM STATUS")
         self.stat_labels = {}
         for key in ["CPU","RAM","DISK"]:
             row = tk.Frame(sf, bg=PANEL)
-            row.pack(fill="x", padx=8, pady=3)
+            row.pack(fill="x", padx=8, pady=4)
             tk.Label(row, text=key, font=("Courier New",7), bg=PANEL,
                      fg=GRAY, width=5, anchor="w").pack(side="left")
-            bar_bg = tk.Canvas(row, bg="#0d1020", height=6, width=130,
-                               highlightthickness=0)
+            bar_bg = tk.Canvas(row, bg="#050505", height=7, width=130, highlightthickness=0)
             bar_bg.pack(side="left", padx=4)
-            lbl = tk.Label(row, text="0%", font=("Courier New",7),
+            lbl2 = tk.Label(row, text="0%", font=("Courier New",7),
                            bg=PANEL, fg=GOLD, width=4)
-            lbl.pack(side="left")
-            self.stat_labels[key] = (bar_bg, lbl)
+            lbl2.pack(side="left")
+            self.stat_labels[key] = (bar_bg, lbl2)
 
-        # NETWORK
         nf = self._panel(p, "NETWORK")
         self.net_lbl = tk.Label(nf, text="▲ 0 KB/s  ▼ 0 KB/s",
                                  font=("Courier New",8), bg=PANEL, fg=GREEN,
@@ -522,24 +1112,40 @@ class RascoApp:
         self._net_old = psutil.net_io_counters()
         self._update_net()
 
+        # CAPABILITIES
+        cf = self._panel(p, "CAPABILITIES")
+        caps = [
+            ("🌐", "Browser Control"),
+            ("▶", "YouTube / Spotify"),
+            ("💬", "Conversation AI"),
+            ("🖥", "System Control"),
+            ("📁", "File Manager"),
+        ]
+        for icon, text in caps:
+            tk.Label(cf, text=f"  {icon}  {text}", font=("Courier New",7),
+                     bg=PANEL, fg=GOLD_G, anchor="w", pady=1).pack(fill="x")
+        tk.Frame(cf, bg=PANEL, height=4).pack()
+
     def _update_net(self):
         try:
             new = psutil.net_io_counters()
             old = self._net_old
-            up = (new.bytes_sent - old.bytes_sent) // 1024
-            dn = (new.bytes_recv - old.bytes_recv) // 1024
+            up  = (new.bytes_sent - old.bytes_sent) // 1024
+            dn  = (new.bytes_recv - old.bytes_recv) // 1024
             self._net_old = new
             self.net_lbl.config(text=f"▲ {up} KB/s   ▼ {dn} KB/s")
         except: pass
         self.root.after(2000, self._update_net)
 
-    # ── CENTER ──────────────────────────────────────────────
     def _build_center(self, p):
-        self.canvas = tk.Canvas(p, bg=BG, highlightthickness=0, width=420, height=460)
+        self.canvas = tk.Canvas(p, bg="#000000", highlightthickness=0, width=440, height=470)
         self.canvas.pack(expand=True)
 
-        tk.Label(p, text=ASSISTANT_NAME, font=("Courier New",14,"bold"),
-                 bg=BG, fg=GOLD_L).pack()
+        name_row = tk.Frame(p, bg=BG)
+        name_row.pack()
+        tk.Label(name_row, text=ASSISTANT_NAME,
+                 font=("Courier New",15,"bold"), bg=BG, fg=GOLD_L).pack(side="left", padx=4)
+
         self.state_lbl = tk.Label(p, text="● Standby",
                  font=("Courier New",9), bg=BG, fg=GOLD_D)
         self.state_lbl.pack(pady=2)
@@ -548,21 +1154,20 @@ class RascoApp:
         btn_row.pack(pady=8)
         def mkbtn(txt, col, cmd):
             tk.Button(btn_row, text=txt, font=("Courier New",8,"bold"),
-                      bg=BG, fg=col, activebackground=BG, activeforeground=col,
-                      relief="flat", bd=0, padx=14, pady=5, cursor="hand2",
+                      bg=DARK, fg=col, activebackground=DARK, activeforeground=col,
+                      relief="flat", bd=0, padx=14, pady=6, cursor="hand2",
                       highlightthickness=1, highlightbackground=col,
-                      command=cmd).pack(side="left", padx=7)
+                      command=cmd).pack(side="left", padx=8)
         mkbtn("◉ LIVE",     GREEN,  self._set_live)
         mkbtn("⏸ PAUSE",   ORANGE, self._set_pause)
         mkbtn("⏻ SHUTDOWN", RED,   self._shutdown)
 
-    # ── RIGHT ───────────────────────────────────────────────
     def _build_right(self, p):
         tk.Frame(p, bg=CYAN_D, height=1).pack(fill="x")
         hdr = tk.Frame(p, bg=PANEL, pady=5)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="CONVERSATION", font=("Courier New",8,"bold"),
-                 bg=PANEL, fg=CYAN, padx=8).pack(side="left")
+        tk.Label(hdr, text="CONVERSATION LOG", font=("Courier New",8,"bold"),
+                 bg=PANEL, fg=GOLD, padx=8).pack(side="left")
         self.listen_ind = tk.Label(hdr, text="STANDBY",
                  font=("Courier New",7,"bold"), bg=PANEL, fg=GOLD_D)
         self.listen_ind.pack(side="right", padx=8)
@@ -570,7 +1175,7 @@ class RascoApp:
 
         self.chat = scrolledtext.ScrolledText(
             p, bg=PANEL, fg=WHITE, font=("Courier New",9),
-            bd=0, relief="flat", padx=8, pady=8,
+            bd=0, relief="flat", padx=10, pady=10,
             wrap=tk.WORD, state="disabled", cursor="arrow"
         )
         self.chat.pack(fill="both", expand=True)
@@ -581,30 +1186,31 @@ class RascoApp:
         self.chat.tag_config("ERR", foreground=RED)
 
         tk.Frame(p, bg=GOLD_D, height=1).pack(fill="x", pady=(4,0))
-        inp_row = tk.Frame(p, bg=PANEL, pady=6, padx=6)
+        inp_row = tk.Frame(p, bg=PANEL, pady=7, padx=6)
         inp_row.pack(fill="x")
+
         self.input_var = tk.StringVar()
         inp = tk.Entry(inp_row, textvariable=self.input_var,
-                       font=("Courier New",10), bg="#0d1020", fg=WHITE,
-                       insertbackground=GOLD, relief="flat", bd=6)
-        inp.pack(side="left", fill="x", expand=True, ipady=5)
+                       font=("Courier New",10), bg="#080818", fg=WHITE,
+                       insertbackground=GOLD_L, relief="flat", bd=8)
+        inp.pack(side="left", fill="x", expand=True, ipady=6)
         inp.bind("<Return>", self.send)
         inp.focus()
 
         self.mic_btn = tk.Button(inp_row, text="🎤",
-                       font=("Courier New",10,"bold"), bg="#1e1e1e", fg=GRAY,
+                       font=("Courier New",10,"bold"), bg="#151515", fg=GRAY,
                        activebackground=GOLD_D, relief="flat", bd=0,
-                       padx=8, pady=5, cursor="hand2", command=self.toggle_mic)
+                       padx=8, pady=6, cursor="hand2", command=self.toggle_mic)
         self.mic_btn.pack(side="left", padx=(4,0))
         self._update_mic_button_state()
 
-        self.send_btn = tk.Button(inp_row, text="SEND ►",
+        self.send_btn = tk.Button(inp_row, text="SEND ▶",
                        font=("Courier New",8,"bold"), bg=GOLD, fg=BG,
                        activebackground=GOLD_L, relief="flat", bd=0,
-                       padx=10, pady=5, cursor="hand2", command=self.send)
+                       padx=12, pady=6, cursor="hand2", command=self.send)
         self.send_btn.pack(side="left", padx=(4,0))
 
-    # ── CLOCK ───────────────────────────────────────────────
+    # ─── CLOCK ──────────────────────────────────────────────────
     def update_clock(self):
         now = datetime.now()
         self.clock_lbl.config(text=now.strftime("%H:%M"))
@@ -613,191 +1219,35 @@ class RascoApp:
         self.day_lbl.config(text=days_fa[now.weekday()])
         self.root.after(1000, self.update_clock)
 
-    # ── STATS ───────────────────────────────────────────────
+    # ─── STATS ──────────────────────────────────────────────────
     def update_stats(self):
-        vals = {
-            "CPU":  psutil.cpu_percent(interval=None),
-            "RAM":  psutil.virtual_memory().percent,
-            "DISK": psutil.disk_usage('/').percent,
-        }
-        for key,(bar_bg, lbl) in self.stat_labels.items():
-            v = vals[key]
-            w = bar_bg.winfo_width()
-            if w < 2: w = 130
-            fill_w = max(2, int(w * v / 100))
-            color = RED if v > 80 else (ORANGE if v > 50 else CYAN)
+        vals = {"CPU": psutil.cpu_percent(interval=None),
+                "RAM": psutil.virtual_memory().percent,
+                "DISK": psutil.disk_usage('/').percent}
+        for key,(bar_bg,lbl2) in self.stat_labels.items():
+            v = vals[key]; w = bar_bg.winfo_width() or 130
+            fw = max(2, int(w * v / 100))
+            col = RED if v>80 else (ORANGE if v>50 else GOLD)
             bar_bg.delete("all")
-            bar_bg.create_rectangle(0, 0, fill_w, 6, fill=color, outline="")
-            lbl.config(text=f"{int(v)}%")
+            bar_bg.create_rectangle(0,0,fw,7, fill=col, outline="")
+            lbl2.config(text=f"{int(v)}%")
         self.root.after(2000, self.update_stats)
 
-    # ── ORB ─────────────────────────────────────────────────
+    # ─── SKULL ANIMATION ────────────────────────────────────────
     def animate_orb(self):
-        c = self.canvas
-        c.delete("all")
-        cx, cy = 210, 230
-
-        bounce = math.sin(math.radians(self.angle*2)) * 2  # idle bob
-
-        # ── COOL ROBOTIC DOBERMAN ─────────────────────────
-        FUR       = "#1c1c1c"
-        FUR_D     = "#000000"
-        TAN       = "#7a4a22"
-        METAL     = "#555555"
-        SHADE_LENS= "#0c0c0c"
-        SHADE_RIM = GOLD
-
-        hx, hy = cx, cy + bounce
-
-        if self.face_state == "listening":
-            tilt = 8
-        elif self.face_state == "thinking":
-            tilt = -5
-        elif self.face_state == "error":
-            tilt = -10
-        else:
-            tilt = 0
-
-        # ── HEAD (skull) — wide rounded oval ──
-        head_w, head_h = 95, 80
-        head_cy = hy - 20
-        c.create_oval(hx-head_w, head_cy-head_h, hx+head_w, head_cy+head_h,
-                      fill=FUR, outline=METAL, width=2)
-
-        # ── EARS — solid wide triangles, clearly attached to top of skull ──
-        for side in (-1, 1):
-            base_x = hx + side*head_w*0.55
-            base_y = head_cy - head_h*0.55
-            tip_x  = hx + side*(head_w*0.85 + tilt*0.4)
-            tip_y  = head_cy - head_h*1.55
-            c.create_polygon(
-                base_x, base_y - 15,
-                base_x + side*36, base_y + 35,
-                tip_x, tip_y,
-                fill=FUR, outline=METAL, width=2
-            )
-
-        # tan eyebrow markings (doberman rust spots above the eyes)
-        for side in (-1, 1):
-            ex = hx + side*head_w*0.42
-            c.create_oval(ex-8, head_cy-head_h*0.30-6, ex+8, head_cy-head_h*0.30+6,
-                         fill=TAN, outline="")
-
-        # ── MUZZLE — rectangle that clearly overlaps the lower head ──
-        muz_w = head_w*0.72
-        muz_top = head_cy + head_h*0.55
-        muz_bottom = head_cy + head_h*1.85
-        c.create_rectangle(hx-muz_w, muz_top, hx+muz_w, muz_bottom,
-                           fill=FUR, outline=METAL, width=2)
-        # round the bottom corners visually with small arcs
-        c.create_oval(hx-muz_w, muz_bottom-30, hx-muz_w+30, muz_bottom+10, fill=FUR, outline="")
-        c.create_oval(hx+muz_w-30, muz_bottom-30, hx+muz_w, muz_bottom+10, fill=FUR, outline="")
-        c.create_oval(hx-muz_w, muz_bottom-30, hx-muz_w+30, muz_bottom+10, outline=METAL, width=2)
-        c.create_oval(hx+muz_w-30, muz_bottom-30, hx+muz_w, muz_bottom+10, outline=METAL, width=2)
-        c.create_line(hx-muz_w+2, muz_bottom, hx+muz_w-2, muz_bottom, fill=METAL, width=2)
-
-        # tan markings on lower sides of the muzzle (classic doberman pattern)
-        for side in (-1, 1):
-            c.create_rectangle(
-                hx+side*muz_w*0.55, muz_top+8,
-                hx+side*muz_w*0.95, muz_bottom-4,
-                fill=TAN, outline=""
-            )
-
-        # nose at the bottom of the muzzle
-        nose_y = muz_bottom - 10
-        c.create_oval(hx-13, nose_y-10, hx+13, nose_y+8, fill=FUR_D, outline=GOLD_D, width=1)
-        c.create_oval(hx-4, nose_y-7, hx+2, nose_y-2, fill=GOLD_L, outline="")  # nose shine
-
-        # ── SUNGLASSES — sit right at the head/muzzle junction ──
-        lens_w, lens_h = 32, 18
-        bridge_y = muz_top - 8
-        eye_dx = head_w*0.40
-        for side in (-1, 1):
-            ex = hx + side*eye_dx
-            c.create_oval(ex-lens_w/2, bridge_y-lens_h/2, ex+lens_w/2, bridge_y+lens_h/2,
-                         fill=SHADE_LENS, outline=SHADE_RIM, width=3)
-            c.create_line(ex-lens_w/2+6, bridge_y-lens_h/2+5, ex-2, bridge_y-2,
-                         fill=GOLD_L, width=2)
-        c.create_line(hx-eye_dx+lens_w/2-2, bridge_y, hx+eye_dx-lens_w/2+2, bridge_y,
-                     fill=SHADE_RIM, width=3)
-        for side in (-1, 1):
-            ex = hx + side*eye_dx
-            c.create_line(ex+side*lens_w/2, bridge_y, ex+side*(lens_w/2+16), bridge_y-2,
-                         fill=SHADE_RIM, width=2)
-
-        # eyebrow ridge glow above shades — shows mood since eyes are hidden
-        self.blink_timer += 1
-        brow_y = bridge_y - lens_h/2 - 10
-        if self.face_state == "error":
-            brow_tilt = 6
-        elif self.face_state == "thinking":
-            brow_tilt = 4
-        else:
-            brow_tilt = 0
-        for side in (-1, 1):
-            ex = hx + side*eye_dx
-            glow = RED if self.face_state == "error" else GOLD
-            c.create_line(ex-10, brow_y + brow_tilt*side, ex+10, brow_y - brow_tilt*side,
-                         fill=glow, width=2, capstyle="round")
-
-        # ── MOUTH — on the muzzle, below the nose level reference ──
-        mouth_y = muz_top + muz_w*0.55
-        mouth_w = 22
+        _draw_skull(self.canvas, 220, 235, self.angle, self.face_state, self.talk_phase)
         if self.face_state == "talking":
             self.talk_phase += 1
-            open_amt = 6 + 6 * abs(math.sin(self.talk_phase * 0.6))
-            c.create_oval(hx-mouth_w/2.2, mouth_y-open_amt/2, hx+mouth_w/2.2, mouth_y+open_amt/2,
-                         fill=FUR_D, outline=GOLD_D, width=2)
-        elif self.face_state == "listening":
-            c.create_oval(hx-mouth_w/3, mouth_y-5, hx+mouth_w/3, mouth_y+5,
-                         fill=FUR_D, outline=GOLD_D, width=2)
-        elif self.face_state == "thinking":
-            c.create_line(hx-mouth_w/2.2, mouth_y, hx+mouth_w/2.2, mouth_y-3,
-                         fill=GOLD_D, width=3, capstyle="round")
-        elif self.face_state == "error":
-            c.create_line(hx-mouth_w/2.2, mouth_y+5, hx+mouth_w/2.2, mouth_y-5,
-                         fill=RED, width=3, capstyle="round")
-        else:  # idle — cool one-sided smirk
-            c.create_line(hx-mouth_w/2, mouth_y, hx, mouth_y+3, fill=GOLD_D, width=3, capstyle="round")
-            c.create_line(hx, mouth_y+3, hx+mouth_w/2, mouth_y-6, fill=GOLD_D, width=3, capstyle="round")
-
-        # whisker hints
-        for side in (-1, 1):
-            for i in range(2):
-                wy = mouth_y - 10 + i*9
-                c.create_line(hx+side*muz_w*0.7, wy, hx+side*(muz_w*0.7+16), wy-3,
-                             fill=METAL, width=1)
-
-        # ── GOLD COLLAR — below the chin ──
-        collar_y = muz_bottom + 22
-        c.create_arc(hx-head_w*1.2, collar_y-22, hx+head_w*1.2, collar_y+30,
-                    start=200, extent=140, outline=GOLD, width=9, style="arc")
-        c.create_oval(hx-10, collar_y+18, hx+10, collar_y+38, fill=GOLD_L, outline=GOLD_D, width=2)
-
-        # state label badge below
-        state_labels = {
-            "idle": ("IDLE", GOLD_D), "listening": ("LISTENING", GREEN),
-            "thinking": ("THINKING", GOLD), "talking": ("TALKING", CYAN),
-            "error": ("ERROR", RED)
-        }
-        lbl, lbl_col = state_labels.get(self.face_state, ("IDLE", GOLD_D))
-        c.create_text(cx, collar_y + 54, text=lbl, fill=lbl_col,
-                      font=("Courier New", 9, "bold"))
-
-        self.angle = (self.angle + 0.7) % 720
+        self.angle = (self.angle + 1.0) % 3600
         self.root.after(40, self.animate_orb)
 
     def set_face_state(self, state):
-        """state: idle / listening / thinking / talking / error"""
         self.face_state = state
 
-
-
-    # ── CONTROLS ────────────────────────────────────────────
+    # ─── CONTROLS ───────────────────────────────────────────────
     def _set_live(self):
-        self.state_lbl.config(text="● Listening", fg=GREEN)
-        self.listen_ind.config(text="LISTENING", fg=GREEN)
+        self.state_lbl.config(text="● Live", fg=GREEN)
+        self.listen_ind.config(text="LIVE", fg=GREEN)
         self.online_lbl.config(text="◉ LIVE", fg=GREEN)
         self.set_face_state("idle")
 
@@ -808,10 +1258,14 @@ class RascoApp:
         self.set_face_state("idle")
 
     def _shutdown(self):
+        global _browser
         speak("در حال خاموش شدن.")
+        try:
+            if _browser: _browser.quit()
+        except: pass
         self.root.after(1200, self.root.destroy)
 
-    # ── LOG ─────────────────────────────────────────────────
+    # ─── LOG ────────────────────────────────────────────────────
     def log(self, role, text):
         self.chat.config(state="normal")
         prefix = {"SYS":"[SYS]","YOU":"[YOU]","BOT":f"[{ASSISTANT_NAME}]",
@@ -820,7 +1274,7 @@ class RascoApp:
         self.chat.config(state="disabled")
         self.chat.see("end")
 
-    # ── SEND ────────────────────────────────────────────────
+    # ─── MIC ────────────────────────────────────────────────────
     def _update_mic_button_state(self):
         if mic_is_available():
             self.mic_btn.config(state="normal", fg=GOLD, cursor="hand2")
@@ -829,13 +1283,12 @@ class RascoApp:
 
     def toggle_mic(self):
         if not mic_is_available():
-            self.log("SYS", "میکروفونی پیدا نشد. وقتی وصل کردی، دوباره برنامه رو باز کن.")
+            self.log("SYS", "میکروفونی پیدا نشد.")
             return
-        if self.processing:
-            return
+        if self.processing: return
         self.mic_btn.config(state="disabled", text="●", fg=RED)
         self.set_face_state("listening")
-        self.log("SYS", "در حال ضبط صدا... (۶ ثانیه)")
+        self.log("SYS", "در حال ضبط... (۶ ثانیه)")
         threading.Thread(target=self._record_thread, daemon=True).start()
 
     def _record_thread(self):
@@ -844,7 +1297,7 @@ class RascoApp:
             if text:
                 self.root.after(0, lambda: self._on_transcribed(text))
             else:
-                self.root.after(0, lambda: self.log("ERR", "چیزی شنیده نشد."))
+                self.root.after(0, lambda: self.log("ERR","چیزی شنیده نشد."))
                 self.root.after(0, lambda: self.set_face_state("error"))
         except Exception as e:
             err = str(e)
@@ -857,6 +1310,7 @@ class RascoApp:
         self.input_var.set(text)
         self.send()
 
+    # ─── SEND ───────────────────────────────────────────────────
     def send(self, event=None):
         cmd = self.input_var.get().strip()
         if not cmd or self.processing: return
@@ -864,74 +1318,67 @@ class RascoApp:
         self.log("YOU", cmd)
 
         if any(w in cmd.lower() for w in ["exit","quit","خروج","خداحافظ"]):
-            self.log("BOT", "خداحافظ! 👋")
+            self.log("BOT","خداحافظ!")
             speak("خداحافظ!")
             self.root.after(1500, self.root.destroy)
             return
 
-        if cmd.strip() in ["پاک کن حافظه", "حافظه رو پاک کن", "clear memory", "forget everything"]:
+        if cmd.strip() in ["پاک کن حافظه","حافظه رو پاک کن","clear memory","forget everything"]:
             self.history = []
-            self.log("SYS", "حافظه گفتگو پاک شد. از اول شروع می‌کنیم.")
+            self.log("SYS","حافظه پاک شد.")
             return
 
         self.processing = True
         self.send_btn.config(state="disabled", text="...")
         self.state_lbl.config(text="◌ Processing...", fg=GOLD)
         self.online_lbl.config(text="◉ THINKING", fg=GOLD)
+        self.listen_ind.config(text="PROCESSING", fg=GOLD)
         self.set_face_state("thinking")
         threading.Thread(target=self._process, args=(cmd,), daemon=True).start()
 
     def _confirm_dialog(self, message):
-        """Thread-safe yes/no confirmation, callable from background thread."""
         result = {"value": False}
-        done = threading.Event()
-
+        done   = threading.Event()
         def ask():
-            result["value"] = messagebox.askyesno("تأیید عملیات", message)
+            result["value"] = messagebox.askyesno("تأیید", message)
             done.set()
-
         self.root.after(0, ask)
         done.wait(timeout=30)
         return result["value"]
 
     def _speak_and_animate(self, text):
-        """Speak while showing a talking face, then return to idle."""
         self.set_face_state("talking")
         speak(text)
-        # تخمین تقریبی مدت گفتار بر اساس تعداد کاراکتر، برای برگشت به حالت idle
-        approx_ms = min(8000, max(1200, len(text) * 70))
+        approx_ms = min(9000, max(1200, len(text) * 70))
         self.root.after(approx_ms, lambda: self.set_face_state("idle"))
 
     def _process(self, cmd):
         try:
             self._process_inner(cmd)
         except Exception as e:
-            # safety net: guarantee something always shows in the UI
             err = f"خطای داخلی: {e}"
-            print(f"[DEBUG] _process top-level exception: {e}")
             self.root.after(0, lambda: self.log("ERR", err))
-            self.root.after(0, lambda: self.online_lbl.config(text="◉ ERROR", fg=RED))
             self.root.after(0, lambda: self.set_face_state("error"))
         finally:
             self.processing = False
-            self.root.after(0, lambda: self.send_btn.config(state="normal", text="SEND ►"))
+            self.root.after(0, lambda: self.send_btn.config(state="normal", text="SEND ▶"))
+            self.root.after(0, lambda: self.listen_ind.config(text="STANDBY", fg=GOLD_D))
+            self.root.after(0, lambda: self.online_lbl.config(text="◉ ONLINE", fg=GREEN))
+            self.root.after(0, lambda: self.state_lbl.config(text="● Standby", fg=GOLD_D))
 
     def _process_inner(self, cmd):
         try:
-            data = ask_claude_code(cmd, history=self.history)
+            data   = ask_claude(cmd, history=self.history)
             action = data.get("action","")
-            resp = execute_action(data, confirm_callback=self._confirm_dialog)
+            resp   = execute_action(data, confirm_callback=self._confirm_dialog)
             self.history.append(("User", cmd))
             self.history.append(("Assistant", resp))
             self.root.after(0, lambda: self.log("ACT", f"Action: {action}"))
             self.root.after(0, lambda: self.log("BOT", resp))
             self.root.after(0, lambda: self._speak_and_animate(resp))
-            self.root.after(0, lambda: self.online_lbl.config(text="◉ ONLINE", fg=GREEN))
         except Exception as e:
             err = str(e)
             self.root.after(0, lambda: self.log("ERR", err))
-            self.root.after(0, lambda: self.state_lbl.config(text="● Error", fg=RED))
-            self.root.after(0, lambda: self.online_lbl.config(text="◉ ERROR", fg=RED))
             self.root.after(0, lambda: self.set_face_state("error"))
 
     def run(self):
